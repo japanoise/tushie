@@ -14,11 +14,12 @@ import (
 
 // Assemble assembles the sourcecode in infile and writes it to the binary file outfile, or returns an error if any stage fails
 func Assemble(infile, outfile string) error {
-	res, err := preProc(infile)
+	astate := state{}
+	err := preProc(infile, &astate)
 	if err != nil {
 		return err
 	}
-	err = asm(res, outfile)
+	err = asm(&astate, outfile)
 	if err != nil {
 		return err
 	}
@@ -32,7 +33,7 @@ const (
 	asmStateB64
 )
 
-func asm(sourcecode, outfile string) error {
+func asm(astate *state, outfile string) error {
 	out, err := os.Create(outfile)
 	if err != nil {
 		return err
@@ -41,12 +42,11 @@ func asm(sourcecode, outfile string) error {
 	state := asmStateOps
 	var buf bytes.Buffer
 
-	for _, line := range strings.Split(sourcecode, "\n") {
+	for _, sline := range astate.source {
 		switch state {
 		case asmStateOps:
 			// Trim space
-			tline := strings.TrimSpace(line)
-
+			tline := strings.TrimSpace(sline.data)
 			// Strip comments and labels
 			clbuild := strings.Builder{}
 			if strings.Contains(tline, ":") {
@@ -106,11 +106,12 @@ func asm(sourcecode, outfile string) error {
 			case "":
 				// Empty line, do nothing
 			case "base64":
-				if !strings.Contains(line, "\"") {
-					return errors.New("base64 argument must be enclosed by double quotes")
+				if !strings.Contains(sline.data, "\"") {
+					return fmt.Errorf("In file %s, line %d: base64 argument must be enclosed by double quotes",
+						sline.filename, sline.orgLinum)
 				}
 				buf = bytes.Buffer{}
-				splqu := strings.Split(line, "\"")
+				splqu := strings.Split(sline.data, "\"")
 				if len(splqu) > 1 {
 					buf.WriteString(splqu[1])
 					if len(splqu) == 2 {
@@ -118,7 +119,8 @@ func asm(sourcecode, outfile string) error {
 					} else {
 						data, err := base64.StdEncoding.DecodeString(buf.String())
 						if err != nil {
-							return err
+							return fmt.Errorf("In file %s, line %d: %s",
+								sline.filename, sline.orgLinum, err.Error())
 						}
 						out.Write(data)
 						out.Sync()
@@ -126,7 +128,8 @@ func asm(sourcecode, outfile string) error {
 				}
 			case "db":
 				if len(spl) < 1 {
-					return errors.New("db requires at least one argument")
+					return fmt.Errorf("In file %s, line %d: db requires at least one argument",
+						sline.filename, sline.orgLinum)
 				}
 				argsstr := strings.Join(spl[1:], " ")
 				instring := false
@@ -150,14 +153,17 @@ func asm(sourcecode, outfile string) error {
 							continue
 						}
 						if !bufd {
-							return errors.New("malformed arguments to db")
+							return fmt.Errorf("In file %s, line %d: malformed arguments to db",
+								sline.filename, sline.orgLinum)
 						}
 						res, err := numparse.UNumParse(nbuf.String())
 						if err != nil {
-							return err
+							return fmt.Errorf("In file %s, line %d: %s",
+								sline.filename, sline.orgLinum, err.Error())
 						}
 						if res > 0xFF {
-							return errors.New("argument to db larger than 0xFF")
+							return fmt.Errorf("In file %s, line %d: argument to db larger than 0xFF",
+								sline.filename, sline.orgLinum)
 						}
 						out.Write([]byte{byte(res)})
 						nbuf = strings.Builder{}
@@ -170,33 +176,37 @@ func asm(sourcecode, outfile string) error {
 				if bufd {
 					res, err := numparse.UNumParse(nbuf.String())
 					if err != nil {
-						return err
+						return fmt.Errorf("In file %s, line %d: %s",
+							sline.filename, sline.orgLinum, err.Error())
 					}
 					if res > 0xFF {
-						return fmt.Errorf("argument to db larger than 0xFF: %d/0o%o/0x%X", res, res, res)
+						return fmt.Errorf("In file %s, line %d: argument to db larger than 0xFF: %d/0o%o/0x%X",
+							sline.filename, sline.orgLinum, res, res, res)
 					}
 					out.Write([]byte{byte(res)})
 				}
 				out.Sync()
 			default:
-				return fmt.Errorf("unknown opcode %s", op)
+				return fmt.Errorf("In file %s, line %d: unknown opcode %s", sline.filename,
+					sline.orgLinum, op)
 			}
 
 		case asmStateB64:
-			if strings.Contains(line, "\"") {
-				splqu := strings.Split(line, "\"")
+			if strings.Contains(sline.data, "\"") {
+				splqu := strings.Split(sline.data, "\"")
 				if len(splqu) >= 1 {
 					buf.WriteString(splqu[0])
 				}
 				data, err := base64.StdEncoding.DecodeString(buf.String())
 				if err != nil {
-					return err
+					return fmt.Errorf("In file %s, line %d: %s",
+						sline.filename, sline.orgLinum, err.Error())
 				}
 				out.Write(data)
 				out.Sync()
 				state = asmStateOps
 			} else {
-				buf.WriteString(line)
+				buf.WriteString(sline.data)
 			}
 		}
 	}

@@ -9,14 +9,13 @@ import (
 	"strings"
 )
 
-func preProc(filename string) (string, error) {
+func preProc(filename string, astate *state) error {
 	file, err := os.Open(filename)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	scanner := bufio.NewScanner(file)
-	ret := strings.Builder{}
 	linum := 0
 	for scanner.Scan() {
 		linum++
@@ -27,50 +26,50 @@ func preProc(filename string) (string, error) {
 				switch dr {
 				case "include":
 					if len(line) <= 9 {
-						return "", fmt.Errorf("In file %s, line %d: no filename provided to #include", filename, linum)
+						return fmt.Errorf("In file %s, line %d: no filename provided to #include", filename, linum)
 					}
-					s, err := preProc(line[9:])
+					err := preProc(line[9:], astate)
 					if err != nil {
-						return "", err
+						return fmt.Errorf("In file included from %s, line %d: %s",
+							filename, linum, err.Error())
 					}
-					ret.WriteString(s)
 				case "incbin":
 					// Using "base64", which is less wasteful than db
-					ret.WriteString("\tbase64 \"")
+					cline := sourceLine{"\tbase64 \"", filename, linum}
 					if len(line) <= 8 {
-						return "", fmt.Errorf("In file %s, line %d: no filename provided to #incbin", filename, linum)
+						return fmt.Errorf("In file %s, line %d: no filename provided to #incbin", filename, linum)
 					}
 					s := (line[8:])
 					file, err := os.Open(s)
 					if err != nil {
-						return "", err
+						return err
 					}
 					defer file.Close()
 					data, err := ioutil.ReadAll(file)
 					if err != nil {
-						return "", err
+						return err
 					}
 					// Break it up so the lines don't get too long.
 					str := base64.StdEncoding.EncodeToString(data)
 					oldidx := 0
 					idx := 64
 					for len(str) > idx {
-						ret.WriteString(str[oldidx:idx])
-						ret.WriteRune('\n')
+						cline.data += str[oldidx:idx]
+						astate.source = append(astate.source, cline)
+						cline = sourceLine{"", filename, linum}
 						oldidx = idx
 						idx += 64
 					}
-					ret.WriteString(str[oldidx:])
-					ret.WriteString("\"\n")
+					cline.data += str[oldidx:idx]
+					astate.source = append(astate.source, cline)
 				default:
-					return "", fmt.Errorf("In file %s, line %d: unknown preprocessor directive #%s", filename, linum, dr)
+					return fmt.Errorf("In file %s, line %d: unknown preprocessor directive #%s", filename, linum, dr)
 				}
 			} else if line[0] != ';' {
-				ret.WriteString(line)
-				ret.WriteRune('\n')
+				astate.source = append(astate.source, sourceLine{line, filename, linum})
 			}
 		}
 	}
 
-	return ret.String(), nil
+	return nil
 }
