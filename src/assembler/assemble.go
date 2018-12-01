@@ -41,6 +41,7 @@ func asm(astate *state, outfile string) error {
 	defer out.Close()
 	state := asmStateOps
 	var buf bytes.Buffer
+	var addr uint64 = 0
 
 	for _, sline := range astate.source {
 		switch state {
@@ -56,7 +57,7 @@ func asm(astate *state, outfile string) error {
 					if ru == ':' && !string {
 						label := clbuild.String()
 						tline = tline[len(label)+1:]
-						// This is where we will add the label to the label list
+						astate.labels[label] = labelData{label, addr}
 						break
 					} else if ru == ';' && !string {
 						break
@@ -122,6 +123,7 @@ func asm(astate *state, outfile string) error {
 							return fmt.Errorf("In file %s, line %d: %s",
 								sline.filename, sline.orgLinum, err.Error())
 						}
+						addr += uint64(len(data))
 						out.Write(data)
 						out.Sync()
 					}
@@ -144,6 +146,7 @@ func asm(astate *state, outfile string) error {
 					} else if instring && ru == '\\' && !escape {
 						escape = true
 					} else if instring {
+						addr += uint64(len(string(ru)))
 						out.WriteString(string(ru))
 						escape = false
 					} else if ru == ',' {
@@ -165,6 +168,7 @@ func asm(astate *state, outfile string) error {
 							return fmt.Errorf("In file %s, line %d: argument to db larger than 0xFF",
 								sline.filename, sline.orgLinum)
 						}
+						addr++
 						out.Write([]byte{byte(res)})
 						nbuf = strings.Builder{}
 						bufd = false
@@ -183,6 +187,7 @@ func asm(astate *state, outfile string) error {
 						return fmt.Errorf("In file %s, line %d: argument to db larger than 0xFF: %d/0o%o/0x%X",
 							sline.filename, sline.orgLinum, res, res, res)
 					}
+					addr++
 					out.Write([]byte{byte(res)})
 				}
 				out.Sync()
@@ -202,6 +207,7 @@ func asm(astate *state, outfile string) error {
 					return fmt.Errorf("In file %s, line %d: %s",
 						sline.filename, sline.orgLinum, err.Error())
 				}
+				addr += uint64(len(data))
 				out.Write(data)
 				out.Sync()
 				state = asmStateOps
