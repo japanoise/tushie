@@ -173,7 +173,7 @@ func asm(sourcecode, outfile string) error {
 						return err
 					}
 					if res > 0xFF {
-						return fmt.Errorf("argument to db larger than 0xFF: %d/0o%o/0x%x", res, res, res)
+						return fmt.Errorf("argument to db larger than 0xFF: %d/0o%o/0x%X", res, res, res)
 					}
 					out.Write([]byte{byte(res)})
 				}
